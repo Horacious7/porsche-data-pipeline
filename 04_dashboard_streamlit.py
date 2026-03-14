@@ -137,7 +137,7 @@ def render_kpis(gold_df: pd.DataFrame, silver_df: pd.DataFrame) -> None:
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Total revenue", f"EUR {total_revenue:,.0f}")
     col2.metric("Cars sold", f"{cars_sold:,}")
-    col3.metric("Models sold", f"{models_count}")
+    col3.metric("Distinct models sold", f"{models_count}")
     col4.metric("Electric share", f"{electric_share:.1f}%")
 
 
