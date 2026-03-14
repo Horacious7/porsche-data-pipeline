@@ -157,3 +157,12 @@ Without them, Spark jobs may fail at runtime with filesystem/native dependency e
 - Dashboard shows no data: run `01_generate_data.py`, `02_upload_bronze.py`, then `03_process_pyspark.py`.
 - `missing ScriptRunContext` warnings: launch dashboard with `streamlit run 04_dashboard_streamlit.py` (not `python 04_dashboard_streamlit.py`).
 
+## Screenshots
+
+![Medalion Arhitecture (Azure)](assets/image4.png)
+
+![Pic1](assets/image1.jpeg)
+
+![Pic2](assets/image2.jpeg)
+
+![Pic3](assets/image3.jpeg)
