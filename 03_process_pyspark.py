@@ -75,6 +75,13 @@ def reset_local_folder(folder_path: str) -> None:
     os.makedirs(folder_path, exist_ok=True)
 
 
+def cleanup_local_workspace() -> None:
+    """Remove local staging artifacts created during pipeline execution."""
+    if os.path.isdir(LOCAL_WORK_DIR):
+        shutil.rmtree(LOCAL_WORK_DIR)
+        logging.info("Cleaned up local workspace '%s'.", LOCAL_WORK_DIR)
+
+
 def bronze_has_json_files(connection_string: str) -> bool:
     """Return True when Bronze contains at least one JSON blob."""
     try:
@@ -352,6 +359,10 @@ def main() -> None:
         if spark is not None:
             spark.stop()
             logging.info("Spark session stopped.")
+        try:
+            cleanup_local_workspace()
+        except Exception:
+            logging.exception("Failed to clean up local workspace '%s'.", LOCAL_WORK_DIR)
 
 
 if __name__ == "__main__":

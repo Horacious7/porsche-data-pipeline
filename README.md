@@ -88,6 +88,7 @@ streamlit run 04_dashboard_streamlit.py
 - If Bronze has no JSON files, pipeline exits gracefully with actionable logs.
 - Azure auth/resource errors are classified and logged explicitly for faster troubleshooting.
 - Local staging avoids unstable direct Spark commit/rename behavior on some Windows + ADLS Gen2 setups.
+- Local staging is automatically cleaned up at the end of each run, so only Azure layer outputs remain.
 - Dashboard gracefully handles missing containers/data and shows guidance in-app.
 
 ## 🛠️ AI-Driven Engineering & Collaboration
