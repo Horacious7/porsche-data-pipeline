@@ -1,0 +1,21 @@
+Act as a Senior Data Engineer. I am building a data pipeline using PySpark and Azure Blob Storage (Data Lake Gen2) with a Medallion Architecture (Bronze, Silver, Gold).
+
+Context:
+- I have mock data about Porsche car sales (JSON format) uploaded in my Azure container named '1-bronze'.
+- My Azure Connection String is stored in an environment variable called AZURE_CONNECTION_STRING.
+- I am running PySpark locally on Windows.
+
+Task:
+Write a Python script (03_process_pyspark.py) that does the following:
+1. Initialize a SparkSession with the necessary Azure Blob Storage packages (org.apache.hadoop:hadoop-azure:3.3.5).
+2. Configure Spark to use my Azure connection string to access the storage account 'datalakeporscheho'.
+3. BRONZE TO SILVER: Read all JSON files from the '1-bronze' container.
+4. Clean the data: Drop rows where 'price' is 0, drop duplicates based on 'vin_number', and add a new column 'processed_timestamp' with the current time.
+5. Save the cleaned DataFrame to the '2-silver' container as Parquet files (overwrite mode).
+6. SILVER TO GOLD: Read the Parquet data from '2-silver'.
+7. Aggregate the data to calculate 'total_revenue' and 'cars_sold' grouped by 'model_name'.
+8. Save this aggregated DataFrame to the '3-gold' container as Parquet files (overwrite mode).
+
+Please write robust, clean code with comments. Use Python's built-in logging module (configured to show timestamps and INFO/ERROR levels) instead of print statements to track the pipeline's progress and handle exceptions.
+Also please revisit the code to ensure it follows best practices for error handling and logging.
+Please also change the comments in the 01_generate_data.py and 02_upload_data.py to match the new context of Porsche car sales data.

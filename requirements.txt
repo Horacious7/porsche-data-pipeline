@@ -1,0 +1,7 @@
+pyspark==3.5.0
+pandas
+pyarrow
+azure-storage-blob
+azure-identity
+streamlit
+python-dotenv
