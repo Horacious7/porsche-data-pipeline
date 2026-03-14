@@ -1,13 +1,11 @@
 import logging
 import os
-import shutil
 from typing import Tuple
 
 from dotenv import load_dotenv
 from azure.core.exceptions import (
     ClientAuthenticationError,
     HttpResponseError,
-    ResourceExistsError,
     ResourceNotFoundError,
 )
 from azure.storage.blob import BlobServiceClient
@@ -20,13 +18,13 @@ STORAGE_ACCOUNT_NAME = "datalakeporscheho"
 BRONZE_CONTAINER = "1-bronze"
 SILVER_CONTAINER = "2-silver"
 GOLD_CONTAINER = "3-gold"
-SILVER_PREFIX = "sales"
-GOLD_PREFIX = "model_metrics"
+SILVER_PREFIX = "sales/"
+GOLD_PREFIX = "model_metrics/"
 
-LOCAL_WORK_DIR = "pipeline_work"
-LOCAL_BRONZE_PATH = os.path.join(LOCAL_WORK_DIR, "bronze_json")
-LOCAL_SILVER_PATH = os.path.join(LOCAL_WORK_DIR, "silver_parquet")
-LOCAL_GOLD_PATH = os.path.join(LOCAL_WORK_DIR, "gold_parquet")
+BRONZE_PATH = f"abfss://{BRONZE_CONTAINER}@{STORAGE_ACCOUNT_NAME}.dfs.core.windows.net/"
+BRONZE_JSON_GLOB_PATH = f"{BRONZE_PATH}*.json"
+SILVER_PATH = f"abfss://{SILVER_CONTAINER}@{STORAGE_ACCOUNT_NAME}.dfs.core.windows.net/{SILVER_PREFIX}"
+GOLD_PATH = f"abfss://{GOLD_CONTAINER}@{STORAGE_ACCOUNT_NAME}.dfs.core.windows.net/{GOLD_PREFIX}"
 
 
 def configure_logging() -> None:
@@ -59,27 +57,51 @@ def get_connection_details() -> Tuple[str, str]:
 
 
 def create_spark_session(account_name: str, account_key: str) -> SparkSession:
-    """Initialize a local SparkSession for transformation logic."""
-    spark = (
-        SparkSession.builder.appName("PorscheSalesMedallionPipeline")
-        .getOrCreate()
-    )
+    """Initialize SparkSession and configure direct ADLS Gen2 access."""
+    builder = SparkSession.builder.appName("PorscheSalesMedallionPipeline")
+
+    # Allow explicit package injection for runtimes that require external Azure jars.
+    spark_jars_packages = os.getenv("SPARK_JARS_PACKAGES")
+    if spark_jars_packages:
+        builder = builder.config("spark.jars.packages", spark_jars_packages)
+
+    spark = builder.getOrCreate()
+
+    dfs_host = f"{account_name}.dfs.core.windows.net"
+    spark.conf.set(f"fs.azure.account.auth.type.{dfs_host}", "SharedKey")
+    spark.conf.set(f"fs.azure.account.key.{dfs_host}", account_key)
+
+    hadoop_conf = spark._jsc.hadoopConfiguration()
+    hadoop_conf.set(f"fs.azure.account.auth.type.{dfs_host}", "SharedKey")
+    hadoop_conf.set(f"fs.azure.account.key.{dfs_host}", account_key)
+
+    # validate_abfs_connector(spark)
     spark.sparkContext.setLogLevel("WARN")
     return spark
 
 
-def reset_local_folder(folder_path: str) -> None:
-    """Clear and recreate a local working folder."""
-    if os.path.isdir(folder_path):
-        shutil.rmtree(folder_path)
-    os.makedirs(folder_path, exist_ok=True)
+def validate_abfs_connector(spark: SparkSession) -> None:
+    """Ensure the Spark runtime has ABFS filesystem classes available."""
+    class_names = [
+        "org.apache.hadoop.fs.azurebfs.SecureAzureBlobFileSystem",
+        "org.apache.hadoop.fs.azurebfs.AzureBlobFileSystem",
+    ]
+    jvm = spark.sparkContext._jvm
 
+    for class_name in class_names:
+        try:
+            jvm.java.lang.Class.forName(class_name)
+            logging.info("Detected ABFS connector class: %s", class_name)
+            return
+        except Exception:
+            continue
 
-def cleanup_local_workspace() -> None:
-    """Remove local staging artifacts created during pipeline execution."""
-    if os.path.isdir(LOCAL_WORK_DIR):
-        shutil.rmtree(LOCAL_WORK_DIR)
-        logging.info("Cleaned up local workspace '%s'.", LOCAL_WORK_DIR)
+    raise RuntimeError(
+        "Spark runtime is missing ABFS filesystem classes. "
+        "Run this script on a Spark server runtime with Azure connectors preinstalled "
+        "(for example Databricks/Synapse), or provide compatible connector packages via "
+        "SPARK_JARS_PACKAGES."
+    )
 
 
 def bronze_has_json_files(connection_string: str) -> bool:
@@ -111,89 +133,13 @@ def bronze_has_json_files(connection_string: str) -> bool:
         raise
 
 
-def download_bronze_files(connection_string: str) -> int:
-    """Download Bronze JSON blobs locally so Spark can process them reliably on Windows."""
-    try:
-        blob_service_client = BlobServiceClient.from_connection_string(connection_string)
-        container_client = blob_service_client.get_container_client(BRONZE_CONTAINER)
-
-        reset_local_folder(LOCAL_BRONZE_PATH)
-        downloaded_files = 0
-
-        for blob in container_client.list_blobs():
-            if not blob.name.lower().endswith(".json"):
-                continue
-
-            safe_name = blob.name.replace("/", "__")
-            local_file = os.path.join(LOCAL_BRONZE_PATH, safe_name)
-            with open(local_file, "wb") as file_obj:
-                file_obj.write(container_client.download_blob(blob.name).readall())
-            downloaded_files += 1
-
-        logging.info("Downloaded %s Bronze JSON files locally to '%s'.", downloaded_files, LOCAL_BRONZE_PATH)
-        return downloaded_files
-    except ResourceNotFoundError:
-        logging.error("Bronze container '%s' was not found.", BRONZE_CONTAINER)
-        raise
-    except (ClientAuthenticationError, HttpResponseError) as exc:
-        logging.error("Failed to download Bronze files due to Azure auth/service error: %s", exc)
-        raise
-
-
-def upload_parquet_folder(
-    connection_string: str,
-    container_name: str,
-    prefix: str,
-    local_folder: str,
-) -> int:
-    """Upload a local parquet dataset folder to an Azure container prefix (overwrite semantics)."""
-    blob_service_client = BlobServiceClient.from_connection_string(connection_string)
-    container_client = blob_service_client.get_container_client(container_name)
-
-    prefix_with_slash = f"{prefix.rstrip('/')}/"
-    blobs_to_delete = sorted(
-        (blob.name for blob in container_client.list_blobs(name_starts_with=prefix_with_slash)),
-        key=lambda name: name.count("/"),
-        reverse=True,
-    )
-    for blob_name in blobs_to_delete:
-        try:
-            container_client.delete_blob(blob_name)
-        except ResourceExistsError as exc:
-            # ADLS Gen2 may expose directory placeholders that cannot be deleted before children.
-            if "DirectoryIsNotEmpty" in str(exc):
-                continue
-            raise
-
-    uploaded_files = 0
-    for root, _, files in os.walk(local_folder):
-        for file_name in files:
-            full_path = os.path.join(root, file_name)
-            relative_path = os.path.relpath(full_path, local_folder).replace("\\", "/")
-            blob_name = f"{prefix_with_slash}{relative_path}"
-
-            with open(full_path, "rb") as data:
-                container_client.upload_blob(name=blob_name, data=data, overwrite=True)
-            uploaded_files += 1
-
-    logging.info(
-        "Uploaded %s files from '%s' to container '%s' prefix '%s'.",
-        uploaded_files,
-        local_folder,
-        container_name,
-        prefix,
-    )
-    return uploaded_files
-
-
 def read_bronze_json(spark: SparkSession) -> DataFrame:
     """Read Bronze JSON files with multiline support and corrupt-record diagnostics."""
-    local_json_glob = os.path.join(LOCAL_BRONZE_PATH, "*.json")
     bronze_df = (
         spark.read.option("multiLine", "true")
         .option("mode", "PERMISSIVE")
         .option("columnNameOfCorruptRecord", "_corrupt_record")
-        .json(local_json_glob)
+        .json(BRONZE_JSON_GLOB_PATH)
     )
 
     columns = set(bronze_df.columns)
@@ -224,7 +170,7 @@ def read_bronze_json(spark: SparkSession) -> DataFrame:
 def process_bronze_to_silver(spark: SparkSession) -> DataFrame:
     """Read Bronze JSON data, clean it, and write Silver Parquet data."""
     try:
-        logging.info("Reading Bronze JSON files from local cache '%s'.", LOCAL_BRONZE_PATH)
+        logging.info("Reading Bronze JSON files from %s", BRONZE_JSON_GLOB_PATH)
         bronze_df = read_bronze_json(spark)
 
         input_count = bronze_df.count()
@@ -233,8 +179,7 @@ def process_bronze_to_silver(spark: SparkSession) -> DataFrame:
         if input_count == 0:
             logging.warning("Bronze input is empty. Writing empty Silver dataset.")
             empty_silver_df = bronze_df.withColumn("processed_timestamp", current_timestamp())
-            reset_local_folder(LOCAL_SILVER_PATH)
-            empty_silver_df.write.mode("overwrite").parquet(LOCAL_SILVER_PATH)
+            empty_silver_df.write.mode("overwrite").parquet(SILVER_PATH)
             return empty_silver_df
 
         valid_price_df = bronze_df.filter(col("price") > 0)
@@ -262,9 +207,8 @@ def process_bronze_to_silver(spark: SparkSession) -> DataFrame:
             cleaned_count,
         )
 
-        logging.info("Writing cleaned data to local Silver parquet folder: %s", LOCAL_SILVER_PATH)
-        reset_local_folder(LOCAL_SILVER_PATH)
-        cleaned_df.write.mode("overwrite").parquet(LOCAL_SILVER_PATH)
+        logging.info("Writing cleaned data to Silver path: %s", SILVER_PATH)
+        cleaned_df.write.mode("overwrite").parquet(SILVER_PATH)
         return cleaned_df
     except Exception:
         logging.exception("Bronze to Silver processing failed.")
@@ -274,8 +218,8 @@ def process_bronze_to_silver(spark: SparkSession) -> DataFrame:
 def process_silver_to_gold(spark: SparkSession) -> DataFrame:
     """Read Silver Parquet data, aggregate metrics, and write Gold Parquet data."""
     try:
-        logging.info("Reading Silver Parquet files from local folder %s", LOCAL_SILVER_PATH)
-        silver_df = spark.read.parquet(LOCAL_SILVER_PATH)
+        logging.info("Reading Silver Parquet files from %s", SILVER_PATH)
+        silver_df = spark.read.parquet(SILVER_PATH)
 
         silver_count = silver_df.count()
         logging.info("Loaded %s records from Silver.", silver_count)
@@ -290,8 +234,7 @@ def process_silver_to_gold(spark: SparkSession) -> DataFrame:
                 ]
             )
             empty_gold_df = spark.createDataFrame([], empty_gold_schema)
-            reset_local_folder(LOCAL_GOLD_PATH)
-            empty_gold_df.write.mode("overwrite").parquet(LOCAL_GOLD_PATH)
+            empty_gold_df.write.mode("overwrite").parquet(GOLD_PATH)
             return empty_gold_df
 
         valid_silver_df = silver_df.filter(
@@ -313,9 +256,8 @@ def process_silver_to_gold(spark: SparkSession) -> DataFrame:
         gold_count = gold_df.count()
         logging.info("Prepared %s aggregated rows for Gold.", gold_count)
 
-        logging.info("Writing aggregated data to local Gold parquet folder: %s", LOCAL_GOLD_PATH)
-        reset_local_folder(LOCAL_GOLD_PATH)
-        gold_df.write.mode("overwrite").parquet(LOCAL_GOLD_PATH)
+        logging.info("Writing aggregated data to Gold path: %s", GOLD_PATH)
+        gold_df.write.mode("overwrite").parquet(GOLD_PATH)
         return gold_df
     except Exception:
         logging.exception("Silver to Gold processing failed.")
@@ -340,16 +282,8 @@ def main() -> None:
             )
             return
 
-        downloaded_bronze_files = download_bronze_files(connection_string)
-        if downloaded_bronze_files == 0:
-            logging.warning("No Bronze files were downloaded locally. Stopping pipeline.")
-            return
-
         process_bronze_to_silver(spark)
-        upload_parquet_folder(connection_string, SILVER_CONTAINER, SILVER_PREFIX, LOCAL_SILVER_PATH)
-
         process_silver_to_gold(spark)
-        upload_parquet_folder(connection_string, GOLD_CONTAINER, GOLD_PREFIX, LOCAL_GOLD_PATH)
 
         logging.info("Pipeline finished successfully.")
     except Exception:
@@ -359,10 +293,6 @@ def main() -> None:
         if spark is not None:
             spark.stop()
             logging.info("Spark session stopped.")
-        try:
-            cleanup_local_workspace()
-        except Exception:
-            logging.exception("Failed to clean up local workspace '%s'.", LOCAL_WORK_DIR)
 
 
 if __name__ == "__main__":

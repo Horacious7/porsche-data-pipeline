@@ -18,20 +18,20 @@ The project follows a Medallion architecture:
 
 ### Bronze -> Silver
 
-- Downloads JSON files from `1-bronze` to a local working folder (`pipeline_work/bronze_json`) and reads them with Spark (multiline-safe parsing).
+- Reads JSON files directly from `1-bronze` using Spark (`abfss://...`).
 - Removes invalid records (`price <= 0`).
 - Drops rows with null/blank `vin_number`, `sale_id`, and `model_name`.
 - Deduplicates by `vin_number`.
 - Adds `processed_timestamp`.
-- Writes parquet locally (`pipeline_work/silver_parquet`) and uploads to `2-silver/sales/` with overwrite semantics.
+- Writes parquet directly to `2-silver/sales/` in overwrite mode.
 
 ### Silver -> Gold
 
-- Reads Silver parquet from the local staging folder.
+- Reads Silver parquet directly from `2-silver/sales/`.
 - Aggregates by `model_name`:
   - `total_revenue = SUM(price)`
   - `cars_sold = COUNT(sale_id)`
-- Writes Gold parquet locally (`pipeline_work/gold_parquet`) and uploads to `3-gold/model_metrics/`.
+- Writes Gold parquet directly to `3-gold/model_metrics/` in overwrite mode.
 
 ## Setup
 
@@ -39,6 +39,9 @@ The project follows a Medallion architecture:
 
 - Python 3.10+
 - Java 8/11/17 (required by Spark)
+- PySpark runtime with Azure connectors available, either:
+  - preinstalled in a managed Spark runtime (Databricks/Synapse), or
+  - provided through `SPARK_JARS_PACKAGES` for local Windows runs
 - Azure Storage account with containers:
   - `1-bronze`
   - `2-silver`
@@ -59,6 +62,13 @@ Copy-Item .env.example .env
 ```
 
 `AZURE_CONNECTION_STRING` must point to account `datalakeporscheho` (or update script constants accordingly).
+
+Optional (recommended for local Windows PySpark compatibility):
+
+- `SPARK_JARS_PACKAGES` in `.env`, for example:
+  - `org.apache.hadoop:hadoop-azure:3.3.2,com.microsoft.azure:azure-storage:8.6.6`
+
+This project is configured to process data directly in Azure (`abfss://...`) without local staging folders.
 
 ## Run
 
@@ -87,9 +97,23 @@ streamlit run 04_dashboard_streamlit.py
 - `03_process_pyspark.py` checks Bronze availability before processing.
 - If Bronze has no JSON files, pipeline exits gracefully with actionable logs.
 - Azure auth/resource errors are classified and logged explicitly for faster troubleshooting.
-- Local staging avoids unstable direct Spark commit/rename behavior on some Windows + ADLS Gen2 setups.
-- Local staging is automatically cleaned up at the end of each run, so only Azure layer outputs remain.
+- Processing runs directly against Azure Data Lake paths (no local staging folders).
 - Dashboard gracefully handles missing containers/data and shows guidance in-app.
+
+## What Happens End-to-End
+
+1. `01_generate_data.py` creates mock Porsche sale JSON files in `data_source/`.
+2. `02_upload_bronze.py` uploads those files to Azure container `1-bronze`.
+3. `03_process_pyspark.py` reads Bronze JSON directly from ADLS (`abfss://`).
+4. Bronze -> Silver cleaning is applied:
+   - removes `price <= 0`
+   - removes null/blank key fields (`vin_number`, `sale_id`, `model_name`)
+   - deduplicates by `vin_number`
+   - adds `processed_timestamp`
+5. Silver data is written to `2-silver/sales/` (overwrite).
+6. Silver -> Gold aggregation computes `total_revenue` and `cars_sold` by `model_name`.
+7. Gold data is written to `3-gold/model_metrics/` (overwrite).
+8. `04_dashboard_streamlit.py` reads Silver/Gold parquet from Azure and renders KPIs + charts.
 
 ## 🛠️ AI-Driven Engineering & Collaboration
 
@@ -127,6 +151,7 @@ Without them, Spark jobs may fail at runtime with filesystem/native dependency e
 ## Quick Troubleshooting
 
 - `AZURE_CONNECTION_STRING is missing`: create/update `.env` and restart terminal.
+- ABFS/connector class errors in local runs: set `SPARK_JARS_PACKAGES` in `.env` using versions that match your Spark/Hadoop runtime.
 - `Bronze container was not found`: verify container name and storage account.
 - `authentication/authorization error`: verify connection string validity and permissions.
 - Dashboard shows no data: run `01_generate_data.py`, `02_upload_bronze.py`, then `03_process_pyspark.py`.
