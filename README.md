@@ -130,4 +130,5 @@ Without them, Spark jobs may fail at runtime with filesystem/native dependency e
 - `Bronze container was not found`: verify container name and storage account.
 - `authentication/authorization error`: verify connection string validity and permissions.
 - Dashboard shows no data: run `01_generate_data.py`, `02_upload_bronze.py`, then `03_process_pyspark.py`.
+- `missing ScriptRunContext` warnings: launch dashboard with `streamlit run 04_dashboard_streamlit.py` (not `python 04_dashboard_streamlit.py`).
 

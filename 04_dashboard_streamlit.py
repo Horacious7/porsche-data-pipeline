@@ -25,10 +25,16 @@ def configure_page() -> None:
         """
         <style>
         .stMetric {
-            background-color: #f8f9fc;
-            border: 1px solid #e6e8ef;
+            /* Use a darker translucent card so text stays readable in dark theme. */
+            background-color: rgba(17, 24, 39, 0.75);
+            border: 1px solid rgba(148, 163, 184, 0.35);
             border-radius: 10px;
             padding: 10px;
+        }
+        .stMetric label,
+        .stMetric [data-testid="stMetricValue"],
+        .stMetric [data-testid="stMetricDelta"] {
+            color: #f3f4f6 !important;
         }
         </style>
         """,
@@ -42,6 +48,8 @@ def configure_logging() -> None:
         level=logging.INFO,
         format="%(asctime)s | %(levelname)s | %(message)s",
     )
+    logging.getLogger("azure").setLevel(logging.WARNING)
+    logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(logging.WARNING)
 
 
 def get_connection_string() -> str:
@@ -197,6 +205,8 @@ def render_charts(gold_df: pd.DataFrame, silver_df: pd.DataFrame) -> None:
 def main() -> None:
     """Run the dashboard app."""
     configure_logging()
+
+
     configure_page()
 
     try:
@@ -235,9 +245,9 @@ def main() -> None:
 
     with st.expander("Preview data"):
         st.write("Gold preview")
-        st.dataframe(gold_df.head(20), use_container_width=True)
+        st.dataframe(gold_df.head(20), width="stretch")
         st.write("Silver preview")
-        st.dataframe(silver_df.head(20), use_container_width=True)
+        st.dataframe(silver_df.head(20), width="stretch")
 
 
 if __name__ == "__main__":
