@@ -125,7 +125,7 @@ streamlit run 04_dashboard_streamlit.py
 8. Gold aggregate data is uploaded to PostgreSQL table `top_porsche_models` (serving layer).
 9. `04_dashboard_streamlit.py` reads Silver/Gold parquet from Azure and renders KPIs + charts.
 
-## 🛠️ AI-Driven Engineering & Collaboration
+## AI-Driven Engineering & Collaboration
 
 This project was developed using modern AI pair-programming practices to accelerate delivery and improve engineering quality.
 
@@ -142,7 +142,7 @@ When using AI coding assistants (Copilot, Cursor, GPT-based tools), protect clou
 - Close `.env` tabs after updating secrets; some assistants can use open editor context.
 - If a key or connection string is exposed, rotate it immediately in Azure Portal (Regenerate Access Keys).
 
-## ⚠️ Crucial Prerequisites for Windows Users
+## Crucial Prerequisites for Windows Users
 
 Running PySpark locally on Windows typically requires Hadoop native binaries.
 Without them, Spark jobs may fail at runtime with filesystem/native dependency errors.
