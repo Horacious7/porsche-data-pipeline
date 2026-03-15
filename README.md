@@ -1,6 +1,6 @@
 # Porsche Sales Medallion Pipeline
 
-End-to-end Porsche sales analytics pipeline built with Python, PySpark, Azure Blob Storage, and Streamlit.
+End-to-end Porsche sales analytics pipeline built with Python, PySpark, Azure Blob Storage, PostgreSQL, and Streamlit.
 The project follows a Medallion architecture:
 
 - `Bronze`: raw JSON sales events (`1-bronze`)
@@ -11,7 +11,7 @@ The project follows a Medallion architecture:
 
 - `01_generate_data.py` - Generates mock Porsche sales JSON files locally.
 - `02_upload_bronze.py` - Uploads generated JSON files into Azure Bronze.
-- `03_process_pyspark.py` - Runs Bronze -> Silver -> Gold transformations with logging and data-quality checks.
+- `03_process_pyspark.py` - Runs Bronze -> Silver -> Gold transformations with logging and data-quality checks, then uploads Gold aggregates to PostgreSQL (serving layer).
 - `04_dashboard_streamlit.py` - Displays KPI cards and charts from Silver/Gold parquet data.
 
 ## Data Pipeline Logic
@@ -32,6 +32,7 @@ The project follows a Medallion architecture:
   - `total_revenue = SUM(price)`
   - `cars_sold = COUNT(sale_id)`
 - Writes Gold parquet directly to `3-gold/model_metrics/` in overwrite mode.
+- Tries to upload the resulting Gold DataFrame to PostgreSQL table `top_porsche_models` via JDBC (non-fatal if the database is paused/unreachable).
 
 ## Setup
 
@@ -62,6 +63,13 @@ Copy-Item .env.example .env
 ```
 
 `AZURE_CONNECTION_STRING` must point to account `datalakeporscheho` (or update script constants accordingly).
+
+For the SQL serving-layer upload, also set:
+
+- `PG_HOST` (Azure PostgreSQL host)
+- `PG_USER`
+- `PG_PASSWORD`
+- `PG_DATABASE` (optional, defaults to `postgres`)
 
 Optional (recommended for local Windows PySpark compatibility):
 
@@ -99,6 +107,7 @@ streamlit run 04_dashboard_streamlit.py
 - Azure auth/resource errors are classified and logged explicitly for faster troubleshooting.
 - Processing runs directly against Azure Data Lake paths (no local staging folders).
 - Dashboard gracefully handles missing containers/data and shows guidance in-app.
+- If PostgreSQL upload fails (for example server paused to save credits), the pipeline logs a warning and still completes Bronze/Silver/Gold successfully.
 
 ## What Happens End-to-End
 
@@ -113,7 +122,8 @@ streamlit run 04_dashboard_streamlit.py
 5. Silver data is written to `2-silver/sales/` (overwrite).
 6. Silver -> Gold aggregation computes `total_revenue` and `cars_sold` by `model_name`.
 7. Gold data is written to `3-gold/model_metrics/` (overwrite).
-8. `04_dashboard_streamlit.py` reads Silver/Gold parquet from Azure and renders KPIs + charts.
+8. Gold aggregate data is uploaded to PostgreSQL table `top_porsche_models` (serving layer).
+9. `04_dashboard_streamlit.py` reads Silver/Gold parquet from Azure and renders KPIs + charts.
 
 ## 🛠️ AI-Driven Engineering & Collaboration
 
@@ -154,15 +164,18 @@ Without them, Spark jobs may fail at runtime with filesystem/native dependency e
 - ABFS/connector class errors in local runs: set `SPARK_JARS_PACKAGES` in `.env` using versions that match your Spark/Hadoop runtime.
 - `Bronze container was not found`: verify container name and storage account.
 - `authentication/authorization error`: verify connection string validity and permissions.
+- `Database connection failed... Skipping SQL upload`: verify PostgreSQL server is running, firewall/network access is allowed, and `PG_*` values are correct.
 - Dashboard shows no data: run `01_generate_data.py`, `02_upload_bronze.py`, then `03_process_pyspark.py`.
 - `missing ScriptRunContext` warnings: launch dashboard with `streamlit run 04_dashboard_streamlit.py` (not `python 04_dashboard_streamlit.py`).
 
 ## Screenshots
 
-![Medalion Arhitecture (Azure)](assets/image4.png)
+![Medallion Architecture (Azure)](assets/image4.png)
 
 ![Pic1](assets/image1.jpeg)
 
 ![Pic2](assets/image2.jpeg)
 
 ![Pic3](assets/image3.jpeg)
+
+![Pic5](assets/image5.png)

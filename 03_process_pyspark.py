@@ -280,10 +280,35 @@ def main() -> None:
                 "Run 02_upload_bronze.py first, then rerun this script.",
                 BRONZE_CONTAINER,
             )
+            logging.info("Pipeline finished successfully.")
             return
 
         process_bronze_to_silver(spark)
-        process_silver_to_gold(spark)
+        gold_df = process_silver_to_gold(spark)
+
+        pg_host = os.getenv("PG_HOST")
+        pg_user = os.getenv("PG_USER")
+        pg_password = os.getenv("PG_PASSWORD")
+        pg_database = os.getenv("PG_DATABASE", "postgres")
+
+        jdbc_url = f"jdbc:postgresql://{pg_host}:5432/{pg_database}?sslmode=require"
+
+        try:
+            gold_df.write.jdbc(
+                url=jdbc_url,
+                table="top_porsche_models",
+                mode="overwrite",
+                properties={
+                    "user": pg_user,
+                    "password": pg_password,
+                    "driver": "org.postgresql.Driver",
+                },
+            )
+        except Exception as e:
+            logging.warning(
+                "Database connection failed. The Azure PostgreSQL server might be paused/stopped to save credits. Skipping SQL upload."
+            )
+            logging.error(f"Eroarea reala de la server este: {e}")
 
         logging.info("Pipeline finished successfully.")
     except Exception:
